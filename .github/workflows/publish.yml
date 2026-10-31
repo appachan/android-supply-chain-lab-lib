@@ -34,3 +34,49 @@ jobs:
           SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
           SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
         run: ./gradlew --no-configuration-cache build publish -PreleaseVersion="${GITHUB_REF_NAME#v}"
+
+  # シークレットを渡さない別の VM でタグからビルドし直し、公開された成果物と比較する
+  verify-reproducible:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Rebuild the release artifacts
+        run: |
+          ./gradlew --no-build-cache -PreleaseVersion="${GITHUB_REF_NAME#v}" :lib:assembleRelease :lib:sourceReleaseJar \
+            :lib:generateMetadataFileForReleasePublication :lib:generatePomFileForReleasePublication
+
+      - name: Compare with GitHub Packages
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          name="android-supply-chain-lab-lib-$version"
+          url="https://maven.pkg.github.com/appachan/android-supply-chain-lab-lib/com/github/appachan/android-supply-chain-lab-lib/$version"
+          mkdir -p "$RUNNER_TEMP/rebuilt"
+          cp lib/build/outputs/aar/lib-release.aar "$RUNNER_TEMP/rebuilt/$name.aar"
+          cp lib/build/publications/release/pom-default.xml "$RUNNER_TEMP/rebuilt/$name.pom"
+          cp lib/build/publications/release/module.json "$RUNNER_TEMP/rebuilt/$name.module"
+          find lib/build -name '*-sources.jar' -exec cp {} "$RUNNER_TEMP/rebuilt/$name-sources.jar" \;
+          cd "$RUNNER_TEMP/rebuilt"
+          for file in *; do
+            published="$(curl -fsSL -u "$GITHUB_ACTOR:$GITHUB_TOKEN" "$url/$file" | sha256sum | cut -d' ' -f1)"
+            rebuilt="$(sha256sum "$file" | cut -d' ' -f1)"
+            echo "$file $rebuilt" | tee -a "$GITHUB_STEP_SUMMARY"
+            test "$published" = "$rebuilt"
+          done

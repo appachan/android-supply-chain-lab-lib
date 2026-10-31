@@ -6,4 +6,6 @@
 
 ## リリース
 
-`v<version>` のタグを push すると、`.github/workflows/publish.yml` が AAR に署名して公開する。
+`v<version>` のタグを push すると、`.github/workflows/publish.yml` が AAR に署名して公開する。続けて、シークレットのない別のジョブがタグからビルドし直し、公開された成果物とバイト単位で比較する。比較に使った SHA-256 はこの実行の job summary に残る。
+
+署名の公開鍵は `docs/signing/release-key.pub.asc`、fingerprint は `8493022D3CF93D42B2DC1C80AD8EDA7ABCFDFAE6` である。検証用の鍵なので、利用側は運用の鍵に置き換える。
