@@ -1,0 +1,15 @@
+[versions]
+compileSdk = "37"
+minSdk = "29"
+
+androidGradlePlugin = "9.3.3"
+kotlin = "2.4.21"
+
+junit4 = "4.13.2"
+
+[libraries]
+junit4 = { module = "junit:junit", version.ref = "junit4" }
+
+[plugins]
+android-library = { id = "com.android.library", version.ref = "androidGradlePlugin" }
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }

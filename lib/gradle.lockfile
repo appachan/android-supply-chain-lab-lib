@@ -1,0 +1,9 @@
+# This is a Gradle generated file for dependency locking.
+# Manual edits can break the build and are not advised.
+# This file is expected to be part of source control.
+# To regenerate this file, run: ./gradlew :lib:dependencies --write-locks
+junit:junit:4.13.2=debugUnitTestCompileClasspath,debugUnitTestRuntimeClasspath
+org.hamcrest:hamcrest-core:1.3=debugUnitTestCompileClasspath,debugUnitTestRuntimeClasspath
+org.jetbrains.kotlin:kotlin-stdlib:2.4.21=debugAndroidTestCompileClasspath,debugAndroidTestRuntimeClasspath,debugCompileClasspath,debugRuntimeClasspath,debugUnitTestCompileClasspath,debugUnitTestRuntimeClasspath,releaseCompileClasspath,releaseRuntimeClasspath
+org.jetbrains:annotations:13.0=debugAndroidTestCompileClasspath,debugAndroidTestRuntimeClasspath,debugCompileClasspath,debugRuntimeClasspath,debugUnitTestCompileClasspath,debugUnitTestRuntimeClasspath,releaseCompileClasspath,releaseRuntimeClasspath
+empty=
