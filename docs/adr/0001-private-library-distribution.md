@@ -1,10 +1,12 @@
 # 1. Private library distribution
 
-Date: 2026-10-31（2026-11-01 に追加の確認を反映）
+Date: 2026-10-31（2026-11-01 に追加の確認と public への変更を反映）
 
 ## Status
 
-ライブラリ側の運用は Accepted。利用側の運用は Proposed で、適用はユーザーが判断する。lab と rss-reader は変更していない。
+ライブラリ側の運用は Accepted。lab が依存してよいこと、鍵の信頼と `sha256` の併用、`sha256` のスクリプトでの追記、`.aar` の値の人の照合は、ユーザーが決めた。lab への組み込みはまだ実行していない。rss-reader には恒常的には導入しない。
+
+このリポジトリは 2026-11-01 にユーザーの指示で public になった。名前の private は当初の検証の条件を表していて、以下の private の記述のうち、結果を変えたものは「public にした後の確認」に書いた。
 
 ## Context
 
@@ -19,7 +21,7 @@ android-supply-chain-lab のテーマ 4 である。自作の Android ライブ�
 
 このリポジトリの構成は Gradle 9.7.1、Android Gradle plugin 9.3.3、Kotlin 2.4.21、JDK 17 で、lab と同じである。
 
-このアカウントは個人のアカウントで、組織には所属していない。`gh api user` の `plan` は null でプランを読めなかった。`GET /repos/.../rulesets` が `Upgrade to GitHub Pro or make this repository public to enable this feature.` を返すので、GitHub Pro より下のプランだと判断した。
+このアカウントは個人のアカウントで、組織には所属していない。`gh api user` の `plan` は null でプランを読めなかった。`GET /repos/.../rulesets` が `Upgrade to GitHub Pro or make this repository public to enable this feature.` を返すので、GitHub Pro より下のプランだと判断した。public にした後は rulesets と environment の `required reviewers` を使える。
 
 ## Decision
 
@@ -29,14 +31,17 @@ android-supply-chain-lab のテーマ 4 である。自作の Android ライブ�
 - 公開の後に、シークレットのない別のジョブがタグからビルドし直し、公開された 4 ファイル（AAR、sources、POM、`.module`）とバイト単位で比較する。比較に使った SHA-256 を job summary に残す
 - `org.gradlex.reproducible-builds` は使わない
 - 一度公開したバージョンは削除しない。直すときは新しいバージョンを出す。レジストリはこれを保証しないので、運用の規則である
-- artifact attestations は使えないので使わない。SLSA の generator も使わない
+- 比較を通った 4 ファイルに、シークレットと Gradle のないジョブ `attest` が artifact attestations を付ける。SLSA の generator は使わない
+- `v*` のタグは ruleset `release-tags` で repository admin 以外の作成、更新、削除を止める
+- `publish` ジョブは environment `release` で動き、`required reviewers` の承認を待つ。`SIGNING_KEY` と `SIGNING_PASSWORD` は environment のシークレットにする。この移動にはシークレットの値が要るので、ユーザーの操作として残っている
 
-利用側（推奨。適用はユーザーの判断）:
+利用側（lab に適用する前提。rss-reader には恒常的には導入しない）:
 
 - `exclusiveContent` と `includeModule` で、この module の取得先を GitHub Packages だけにする
 - `verification-metadata.xml` で、ライブラリの鍵の `trusted-key` をバージョン付きで持ち、さらに同じバージョンの `.aar` と `.module` の `sha256` を持つ。Gradle の再生成は新しいバージョンの `sha256` を書かないので、検査つきのスクリプトで足す。スクリプトだけでは防げない脅威が残るので、人が `.aar` の値をリビルドの job summary と照合する工程は残す（「追加の確認」の 1）
 - `gradle.lockfile` で更新を差分に出す
-- 読み取りの認証は、`Manage Actions access` が Maven のパッケージで使えるかをユーザーが確認してから決める。使えなければ classic PAT の `read:packages` を使う
+- lab の Actions の読み取りは `GITHUB_TOKEN` で足りる（「public にした後の確認」の 1）。PAT は要らない。匿名では読めない
+- org の private ライブラリの読み取りの認証は検証の対象から外す。想定している org ではすでに内部の依存を解決できているので、認証はある前提にする
 - 鍵の漏えいのときは、`trusted-key` を消して `ignored-key` に移す
 - `regenerate` ジョブには読み取りの token を渡さない。ライブラリの取得は別のジョブで行い、artifact で渡す。同じジョブの中で step を分けるだけでは境界にならない（「追加の確認」の 2）
 
@@ -152,7 +157,7 @@ Gradle の signing plugin で署名し、GitHub Packages で公開と取得が�
 検証用の鍵は Actions シークレットに 1 つ置いた。運用の鍵では次のようにする。ここは実行していない。
 
 - 主鍵はオフラインに置き、主鍵の秘密部分を除いた鍵輪と副鍵の鍵 ID を Actions シークレットに入れる。副鍵での署名は実際に確認した。ただし Gradle の信頼は副鍵の fingerprint に結びつくので、副鍵の交換は利用側には鍵の交換と同じに見える（「追加の確認」の 4）
-- 公開の workflow を変更できる人は `SIGNING_KEY` を使える。このプランの private リポジトリでは rulesets を使えない。environment の `required reviewers` も使えない。environment のタグのポリシーは効いたので、`SIGNING_KEY` を `v*` のタグに限った environment のシークレットに移せば、ブランチの workflow から読めなくなる（「追加の確認」の 3）
+- リポジトリの secret のままでは、workflow を push できる人は `SIGNING_KEY` を使える。environment のシークレットに移すと、environment を指定しないジョブには渡らず、`release` は `v*` のタグと承認を要求する（「public にした後の確認」の 4）
 - `publish.yml` は `--no-configuration-cache` で実行し、署名鍵が configuration cache のエントリに入らないようにする
 
 `publish.yml` の公開のジョブは鍵を持つが、リビルドのジョブは鍵を持たない。鍵を持つジョブに不正なコードが混ざった場合でも、タグのソースからの結果と一致しなければ失敗する。
@@ -207,7 +212,7 @@ Gradle は鍵の失効と期限切れを見ない。この点は公式の説明�
 
 ### GitHub の artifact attestations
 
-使えない。
+public にした後は使える。結果は「public にした後の確認」の 2 に書いた。以下は private のときの記録である。
 
 [公式](https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/use-artifact-attestations)の記述は `To use artifact attestations in private or internal repositories, you must be on a GitHub Enterprise Cloud plan.` である。
 
@@ -217,13 +222,12 @@ Gradle は鍵の失効と期限切れを見ない。この点は公式の説明�
 Failed to persist attestation: Feature not available for user-owned private repositories. To enable this feature, please make this repository public.
 ```
 
-Enterprise Cloud への変更と、リポジトリの public への変更は、今回の制約の外である。したがって `publish.yml` に attestation の step はない。
 
 ### 代案の比較
 
 | 案 | 判定 | 理由 |
 | --- | --- | --- |
-| artifact attestations | 不可 | 上記。public にするか Enterprise Cloud にすれば使える |
+| artifact attestations | 採用（public にした後） | 上記 |
 | [SLSA の generic generator](https://github.com/slsa-framework/slsa-github-generator/blob/main/internal/builders/generic/README.md) | 不採用（実行していない） | 下記 |
 | タグからのリビルドの比較 | 採用 | シークレットなしで動き、論点 4 の結果で成立する |
 | 同じ鍵で provenance の JSON に署名する | 不採用（実行していない） | 鍵を持つジョブが自己申告するだけで、`.asc` の署名を超える情報がない |
@@ -236,7 +240,7 @@ SLSA の generator を実行しなかった理由は次のとおりである。
 
 ### 採用した検証と、検証する人
 
-リビルドの比較が示すのは、タグのソースから同じ成果物が作れることである。リビルドのジョブも同じリポジトリの定義で動くので、ワークフローの改ざんには耐えない。artifact attestations の代わりに、GitHub が署名する証明は得られない。
+リビルドの比較が示すのは、タグのソースから同じ成果物が作れることである。リビルドのジョブも同じリポジトリの定義で動くので、ワークフローの改ざんには耐えない。attestation はこの結果に GitHub の OIDC の証明書で署名を足すが、これも同じ定義で動くので、追跡の材料であって止める手段ではない。
 
 | 工程 | 誰が | 何を |
 | --- | --- | --- |
@@ -244,12 +248,13 @@ SLSA の generator を実行しなかった理由は次のとおりである。
 | ライブラリの更新の PR | スクリプトと、PR を確認する人 | スクリプトが検査のうえで `sha256` を追記する。人は `.aar` の値を job summary と照合し、`trusting` の差分がバージョンの追加だけであることを確認する |
 | すべてのビルド | Gradle | 記録した鍵とハッシュを検証する |
 
-public の利用側の CI と Dependabot は private のソースを読めないので、リビルドは利用側では行わない。
-
-将来 artifact attestations が使えるようになったら、ライブラリの更新の PR を確認する人が、更新前に次を実行する。public の利用側の CI には private のリポジトリの attestation を読む権限を足さない。
+ライブラリの更新の PR を確認する人は、更新前に次を実行する。`--source-ref` を省くと、同じ中身の別のバージョンでも成功する。
 
 ```sh
-gh attestation verify android-supply-chain-lab-lib-<version>.aar --repo appachan/android-supply-chain-lab-lib
+gh attestation verify android-supply-chain-lab-lib-<version>.aar \
+  --repo appachan/android-supply-chain-lab-lib \
+  --signer-workflow appachan/android-supply-chain-lab-lib/.github/workflows/publish.yml \
+  --source-ref refs/tags/v<version>
 ```
 
 ## 論点 4: 再現可能なビルド
@@ -366,11 +371,11 @@ updates:
 
 ## 論点 7: 認証の選択肢
 
-public の利用側のリポジトリの CI と Dependabot が読む方法の比較である。PAT は作っていない。別のリポジトリから読む実験はできていないので、以下は公式の情報と論点 1 の結果による。
+public の利用側のリポジトリの CI と Dependabot が読む方法の比較である。PAT は作っていない。この節は private のパッケージを別のリポジトリから読む場合の記録である。ユーザーの判断で検証の対象から外した。`Manage Actions access` はパッケージの settings になかった（ユーザーがスクリーンショットで確認。Options は Danger Zone だけ）。public のパッケージの読み取りの結果は「public にした後の確認」の 1 に書いた。
 
 | 方法 | 権限の範囲 | 個人への紐づき | 失効の手間 | 確認の状態 |
 | --- | --- | --- | --- | --- |
-| `Manage Actions access` と `GITHUB_TOKEN` | パッケージごとに利用側のリポジトリを指定 | なし | パッケージの設定から外す | Maven で使えるか不明 |
+| `Manage Actions access` と `GITHUB_TOKEN` | パッケージごとに利用側のリポジトリを指定 | なし | パッケージの設定から外す | Maven のパッケージの settings に存在しない |
 | classic PAT の `read:packages` | その人が読める全てのパッケージ。fine-grained PAT は使えない | 個人に紐づく | 手で失効し、Actions と Dependabot の 2 か所の secret を更新する。有効期限のたびに同じ | [公式](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-apache-maven-registry)が示す方法。未実行 |
 | 機械用のアカウントの classic PAT | そのアカウントに read を与えたリポジトリのパッケージだけ | 機械用のアカウント | PAT と同じ。アカウントの管理が増える | 未実行 |
 | GitHub App の installation token | 不明 | なし | 自動で短期 | 未確認。下記 |
@@ -383,11 +388,6 @@ public の利用側のリポジトリの CI と Dependabot が読む方法の比
 2023 年の [community discussion](https://github.com/orgs/community/discussions/57603) には、`GITHUB_TOKEN` では同じ組織の別のリポジトリの Maven パッケージを読めないという報告がある。現在の状態は確認できていない。
 
 GitHub App の token については、[公式](https://docs.github.com/en/packages/learn-github-packages/about-permissions-for-github-packages)が `GitHub Packages only supports authentication using a personal access token (classic).` と書く一方で、同じページが `GITHUB_TOKEN` を認めている。`GITHUB_TOKEN` も GitHub App の installation access token である。[github/docs の issue 9547](https://github.com/github/docs/issues/9547) は installation token が Maven で使えないという利用者の報告で、2022 年に閉じられている。公式の回答は確認していない。
-
-推奨は次の順序である。
-
-1. ユーザーが GitHub Packages のパッケージの設定を開き、`Manage Actions access` があるかを確認する。あれば lab に Read を与えて実際の CI で確かめる。シークレットが増えず、最も狭い
-2. なければ、classic PAT の `read:packages` を最も短い運用可能な有効期限で作り、Actions と Dependabot の secret に入れる。漏えいの影響は読み取りだけだが、そのアカウントが読める全ての private パッケージに及ぶ。ライブラリのパッケージが増えるなら機械用のアカウントに移る
 
 public のリポジトリの利用側には、認証の方法によらず次の影響がある。
 
@@ -571,7 +571,7 @@ keyring にある別の鍵で署名した場合、fingerprint の検査だけが
 
 したがって、照合は残す。記録する人の手間は `sha256` の追記の分だけ減り、PR で見るのは `.aar` の 1 つの値だけになる。
 
-照合を自動にするには、`Commit verification metadata` がライブラリの private の情報を読む必要があり、別の認証情報が要る。ここは実行していない。
+照合を自動にする案は実行していない。public にした後は attestation の検証を CI に置ける可能性があるが、ユーザーの判断は人の照合である。
 
 ### 2. token を渡さない再生成
 
@@ -690,7 +690,7 @@ CI の `verify` ジョブも依存のコードを実行するので、同じ形�
 
 [公式](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments)は `Users with GitHub Free plans can only configure environments for public repositories.` と書いていて、実際の動作と異なる。このアカウントのプランは API で読めないが、上の 2 つの失敗の応答とは整合する。公式の説明と異なるので、この動作を唯一の防御にしない。
 
-`SIGNING_KEY` を `v*` のタグだけの environment に移すと、ブランチに push した workflow からは読めなくなる。リポジトリに書き込める人はタグも作れるので、人の承認の代わりにはならない。検証用の鍵のファイルは消したので、移すなら運用の鍵を作るときに行う。今回は `publish.yml` を変更していない。
+この確認は private のときのものである。public にした後の設定と結果は「public にした後の確認」の 4 に書いた。
 
 ### 4. 副鍵
 
@@ -732,6 +732,119 @@ CI の `verify` ジョブも依存のコードを実行するので、同じ形�
 
 スクリプトに渡す期待の fingerprint は副鍵のものである。副鍵の交換のたびに更新する。
 
+## public にした後の確認
+
+2026-11-01 にリポジトリとパッケージが public になった後の確認である。`gh repo view` の `visibility` と、`GET /users/appachan/packages/maven/...` の `visibility` はどちらも public だった。
+
+公開の前に tree と全履歴に加えて、public で読めるようになった 16 件の run のログ、2 件の artifact、ブランチを消した probe の commit（SHA で読める）を、秘密鍵と token のパターンで検索した。一致は 0 件である。`SIGNING_KEY` と `SIGNING_PASSWORD` の値はログにマスクされている。
+
+### 1. public のパッケージの読み取り
+
+lab の一時ブランチの workflow で確かめた（[lab の run 41264320118](https://github.com/appachan/android-supply-chain-lab/actions/runs/41264320118)）。lab の main は変更していない。
+
+| 条件 | 結果 |
+| --- | --- |
+| lab の `GITHUB_TOKEN`（`packages: read`）で `maven-metadata.xml`、POM、AAR、`.asc` | すべて 200。AAR は `fc6f0cfd...` で job summary の値と一致 |
+| 同じ token で Gradle の解決 | `BUILD SUCCESSFUL` |
+| lab の `GITHUB_TOKEN`（`contents: read` だけ） | 200。`packages: read` は要らない |
+| Actions から匿名 | 401 |
+| 手元から匿名（POM、AAR、`maven-metadata.xml`） | 401 |
+| 手元の `gh` の token（`read:packages` なし）で AAR | 401。public でも変わらない |
+
+public のパッケージでも GitHub Packages の Maven は認証を要求する。別のリポジトリの `GITHUB_TOKEN` は通るので、lab の CI に追加のシークレットは要らない。fork の PR にも読み取りの `GITHUB_TOKEN` は渡るが、確認していない。外部の人が手元でビルドするには `read:packages` の token が要る。
+
+### 2. artifact attestations
+
+`publish.yml` に `attest` ジョブを足し、`0.3.0` を公開した（[run 41264504900](https://github.com/appachan/android-supply-chain-lab-lib/actions/runs/41264504900)、[attestation 62240678](https://github.com/appachan/android-supply-chain-lab-lib/attestations/62240678)）。`actions/attest` v4.2.2 を使う。`actions/attest-build-provenance` は `actions/attest` の wrapper で、新しい利用には `actions/attest` が勧められている。
+
+`attest` ジョブは `verify-reproducible` の後に動き、公開物をダウンロードして 4 ファイルを証明する。「追加の確認」の 2 のとおり step の分離は境界にならないので、OIDC の token（`id-token: write`）は Gradle も `SIGNING_KEY` もないジョブにだけ渡す。
+
+手元の `gh` の token ではパッケージを読めないので、タグのコミットを手元で（macOS、Temurin 17）ビルドした。4 ファイルの SHA-256 はすべて公開物と一致した。OS をまたいでも再現できたことになる。
+
+| `gh attestation verify` の入力 | 結果 |
+| --- | --- |
+| 本物の 4 ファイル、`--repo`、`--signer-workflow .../publish.yml`、`--source-ref refs/tags/v0.3.0` | 成功 |
+| AAR に 1 バイト追加 | 失敗（exit 1、この digest の attestation が 404） |
+| POM のバージョンを書き換え | 失敗（exit 1、同じ） |
+| 本物の AAR、`--repo` が lab | 失敗（exit 1） |
+| 本物の AAR、`--source-ref refs/tags/v9.9.9` | 失敗。`expected SourceRepositoryRef to be refs/tags/v9.9.9, got refs/tags/v0.3.0` |
+| 本物の AAR、`--signer-workflow .../ci.yml` | 失敗（exit 1） |
+| `0.2.0` の AAR、`--source-ref refs/tags/v0.2.0` | 失敗。`0.3.0` の attestation を見つける |
+| `0.2.0` の AAR、`--source-ref refs/tags/v0.3.0` | 成功 |
+
+最後の 2 行は、attestation が digest に結びつくことを示す。AAR にはバージョンが入らず、`0.1.0` から `0.3.0` まで AAR は同じ `fc6f0cfd...` である。`--repo` だけの検証は「どこかのタグでこの中身が作られた」としか言わない。`--source-ref` と `--signer-workflow` を指定する。検証に使う API の `GET /repos/.../attestations/sha256:...` は匿名でも 200 だった。
+
+attestation は公開の Rekor の透明性ログにも残る（logIndex 3617804663）。public のリポジトリなので問題にしない。
+
+### 3. タグの ruleset
+
+ruleset `release-tags`（id 26296413）を active にした。対象は `refs/tags/v*`、規則は `creation`、`update`、`deletion`、`non_fast_forward` である。確認には workflow を含まない commit に付けた使い捨てのタグを使い、終わった後に消した。
+
+このリポジトリの人は admin の 1 人だけで、write role の人はいない。write role の代わりに、`contents: write` の `GITHUB_TOKEN` を admin ではない書き込みの actor として使った（[run 41265259811](https://github.com/appachan/android-supply-chain-lab-lib/actions/runs/41265259811)、[run 41265341951](https://github.com/appachan/android-supply-chain-lab-lib/actions/runs/41265341951)）。
+
+| 実行者 | 操作 | bypass なし | admin を bypass |
+| --- | --- | --- | --- |
+| admin（SSH の push） | `v*` の作成 | 拒否。`Cannot create ref due to creations being restricted.` | 成功 |
+| admin（SSH の push） | `v*` の移動 | 拒否。`Cannot update this protected ref.` | 未確認 |
+| admin（SSH の push） | `v*` の削除 | 拒否。`Cannot delete this tag` | 成功 |
+| admin（REST API） | `v*` の作成 | 拒否（422） | 未確認 |
+| `GITHUB_TOKEN` | `v*` の作成（API、git push） | 拒否 | 拒否 |
+| `GITHUB_TOKEN` | `v*` の削除 | 拒否 | 拒否 |
+| `GITHUB_TOKEN` | `v*` 以外のタグの作成と削除（対照） | 成功 | 成功 |
+| `GITHUB_TOKEN` | ruleset の無効化 | 403 | 403 |
+
+bypass の扱いは次のとおりである。
+
+- 既定は bypass なしで、admin も止まる。admin を bypass にしないと誰も `v*` を作れない
+- admin は ruleset を変更できる。止まるのは操作の誤りと、admin でない人である。admin の 1 人が決めれば外せる
+- API が受け付けた bypass: `RepositoryRole` の admin（5）、maintain（2）、write（4）、`DeployKey`、`User`
+- API が拒否した bypass: `Integration` の GitHub Actions（15368。`must be part of the ruleset source or owner organization`）、`OrganizationAdmin`（`ruleset source must be in an organization`）、`pull_request` の mode（タグでは不可）
+- write role（4）を足しても `GITHUB_TOKEN` は拒否された。この role の bypass は Actions の token には効かない
+- `write` の bypass は、守りたいものを外す設定なので使わない。最終の設定は admin（5）だけである
+
+ここで確かめられないこと: 実際の write role の人が拒否されるか。`GITHUB_TOKEN` は role を持つ人ではないので、同じ結果になるのは公式の説明からの推定である。組織の `OrganizationAdmin`、Team、GitHub App の bypass は個人のリポジトリでは確かめられない。Actions の token は組織のリポジトリなら bypass にできる可能性がある。
+
+### 4. environment の `required reviewers`
+
+environment `release` を作った。`required_reviewers` は `appachan`、`prevent_self_review` は false、タグのポリシーは `v*` である。`prevent_self_review` は API で受け付けたが、true のままだと 1 人のリポジトリではタグを push した本人が承認できないと見込まれるので、false にした。動作は確認していない。
+
+`publish.yml` の `publish` ジョブに `environment: release` を足し、`v0.4.0` を push した。
+
+| 確認 | 結果 | 実行 |
+| --- | --- | --- |
+| `v0.4.0` の `publish` ジョブ | `waiting`。step は 0 件。`0.4.0` は公開されていない | [run 41265435254](https://github.com/appachan/android-supply-chain-lab-lib/actions/runs/41265435254) |
+| 承認者の表示 | `pending_deployments` は `appachan` を返す | 同上 |
+| タグ `probe-env-gate-1` から `environment: release` を指定 | 拒否。`Tag "probe-env-gate-1" is not allowed to deploy to release due to environment protection rules.` | [run 41265437870](https://github.com/appachan/android-supply-chain-lab-lib/actions/runs/41265437870) |
+| 同じ実行で environment を指定しないジョブ | repository の secret は読める。environment の secret（確認用のダミー）は読めない | 同上 |
+
+`v0.4.0` の承認はしていない。`gh` の token はユーザー本人のものなので API では承認できるが、人の承認を確かめる検証で Claude が承認すると意味がなくなる。
+
+シークレットの移動は実行していない。値を読めないので、ユーザーが `gh secret set --env release` で入れ直す必要がある。移動するまで `SIGNING_KEY` は repository の secret のままで、environment を指定しないジョブから読める。
+
+ここで確かめられないこと: `required reviewers` の承認者でない write role の人が承認できないこと、`prevent_self_review` の実際の効果、承認の後の公開。
+
+### 5. ruleset と `required reviewers` が止めないもの
+
+write role の 1 人でリリースできる問題に対して、ruleset と `required reviewers` は `v*` のタグと署名鍵を止める。バージョンの公開そのものは止めない。
+
+[run 41265259811](https://github.com/appachan/android-supply-chain-lab-lib/actions/runs/41265259811) は `v*` ではないタグ `probe-write-actor-1` の workflow である。
+
+| 確認 | 結果 |
+| --- | --- |
+| `SIGNING_KEY` を読めるか（repository の secret のとき） | 読める。値は出力していない |
+| `packages: write` の `GITHUB_TOKEN` で `0.0.2-probe` を PUT | POM、AAR とも 200。`.asc` はなく、ルールと承認を通っていない |
+| 同じ token で `0.0.2-probe` を削除 | 成功。確認の後に残っていない |
+
+`packages: write` は workflow の宣言で得られるので、シークレットを移しても、write role の人は `v*` 以外の ref の workflow から未署名のバージョンを公開し、公開済みのバージョンを消せる。止めるのは利用側である。
+
+| 利用側の検査 | この公開に対して |
+| --- | --- |
+| 鍵の信頼（`pgp`） | `.asc` がないと `trusting` に新しいバージョンが足されないので、`pin_library_hashes.py` は `not covered by trusted key` で拒否する見込み。未署名の場合は実行していない |
+| `sha256` の記録 | 公開済みのバージョンの差し替えを検知する |
+| `gh attestation verify` の `--signer-workflow` と `--source-ref` | この公開には attestation がない。別の ref の workflow が attestation を作っても、`--source-ref` が一致しない |
+
+したがって、`SIGNING_KEY` を environment に移すことが必要である。移せば、未署名のバージョンは利用側で止まり、署名には承認が要る。
+
 ## 再現手順
 
 ライブラリの再生成:
@@ -752,18 +865,18 @@ GRADLE_USER_HOME="$(mktemp -d)" sh -c '
 shasum -a 256 lib/build/outputs/aar/lib-release.aar
 ```
 
-確認用のワークフローは一時ブランチ `probe/packages`、`probe/republish`、`probe/consumer`、`probe/status` に置き、確認の後に消した。実行の記録は Actions に残る。
+確認用のワークフローは一時ブランチ `probe/packages`、`probe/republish`、`probe/consumer`、`probe/status`、タグ `probe-write-actor-1`、`probe-write-actor-2`、`probe-env-gate-1`、lab の一時ブランチ `probe/lib-read` に置き、確認の後に消した。実行の記録は Actions に残る。
 
 ## rss-reader に適用するときの差分
 
-rss-reader は読むだけで、適用していない。
+rss-reader にはこのライブラリを恒常的に導入しない。依存は検証のための一時的なものに限る。rss-reader は読むだけで、適用していない。一時的に試すときの差分は次のとおりである。
 
 - `settings.gradle.kts` に論点 8 の `exclusiveContent` を足す。`pluginManagement` の repositories には足さない
 - catalog にライブラリを足し、公開鍵を `gradle/verification-keyring.keys` に足す
 - 再生成の後に、ライブラリの `sha256` を `verification-metadata.xml` に足す
 - lab の `Regenerate verification metadata` ワークフロー（`.github/workflows/regenerate-verification-metadata.yml`）の `regenerate` ジョブの前に取得のジョブを足し、`regenerate` ジョブには token を渡さない。settings は「追加の確認」の 2 の形にする
 - 再生成と検証の strict モードのビルドの後に `pin_library_hashes.py` を実行する。期待する fingerprint は PR で変更できない場所に置く
-- CI のジョブと Dependabot の secret store の両方に認証情報を入れる
+- CI のジョブは `GITHUB_TOKEN` で読める。Dependabot の認証は未確認
 - rss-reader は `setup-gradle` を使っている。token の環境変数と configuration cache の組み合わせは確認していない。署名鍵と同じ理由で、token が configuration cache に保存されないことを確認する
 - fork の PR の CI の失敗をどう扱うかを決める
 
@@ -775,15 +888,18 @@ rss-reader は読むだけで、適用していない。
 - `verify-reproducible` はリソースや NDK を足すと失敗するかもしれない
 - 検証の鍵はシークレットに 1 つだけある。運用の鍵は別に作り直す
 - レジストリは不変ではない。`packages: write` で動くワークフローは公開済みのバージョンを差し替えられる
-- GitHub が署名する provenance はない。リビルドの比較はワークフローの改ざんには耐えない
+- attestation は追跡の材料で、公開を止めない。リビルドの比較と同じく、ワークフローの改ざんには耐えない
+- `v*` のリリースには、admin のタグの push と承認の 2 つの操作が要る。admin が 1 人なら、どちらも同じ人である
+- `0.1.0` から `0.3.0` まで AAR が同じなので、AAR の attestation は `--source-ref` なしではバージョンを区別しない
+- `packages: write` は ruleset と environment を通らない。未署名のバージョンの公開と公開済みのバージョンの削除は、利用側の検査で扱う
 
 ## 未解決
 
-- `Manage Actions access` が Maven のパッケージで使えるか
-- Dependabot の実際の動作。`Manage Actions access` と `registries` のどちらも、自動の認証の Maven への適用も確認していない
-- 別のリポジトリから読む classic PAT の動作。PAT を作っていない
-- GitHub App の token で読めるか
-- environment がこのプランの private リポジトリで動くのは公式の説明と異なる。今後も動くかは分からない
+- `SIGNING_KEY` と `SIGNING_PASSWORD` の environment への移動と、移動の後の承認から公開までの実行。ユーザーの操作が要る
+- 実際の write role の人に対する ruleset の拒否と、承認者でない人の承認の拒否。人が 1 人なので確かめられない
+- `prevent_self_review` の 1 人のリポジトリでの動作
+- Dependabot の実際の動作。`registries` も、自動の認証の Maven への適用も確認していない
+- fork の PR の `GITHUB_TOKEN` で読めるか
 - 実際の Dependabot の PR で、取得のジョブから `regenerate` ジョブへ渡す形が動くか。この確認は `push` の実行で、`GITHUB_TOKEN` を読み取りの token の代わりに使った
 - `ignored-key` に副鍵の fingerprint を書いたときの動作と、副鍵の失効の扱い
 - `trusted-key` に 16 桁の鍵 ID を書いたときの失敗の原因。`useInMemoryPgpKeys` が 16 桁の鍵 ID で失敗した原因
