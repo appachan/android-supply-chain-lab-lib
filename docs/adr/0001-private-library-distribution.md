@@ -33,7 +33,7 @@ android-supply-chain-lab のテーマ 4 である。自作の Android ライブ�
 - 一度公開したバージョンは削除しない。直すときは新しいバージョンを出す。レジストリはこれを保証しないので、運用の規則である
 - 比較を通った 4 ファイルに、シークレットと Gradle のないジョブ `attest` が artifact attestations を付ける。SLSA の generator は使わない
 - `v*` のタグは ruleset `release-tags` で repository admin 以外の作成、更新、削除を止める
-- `publish` ジョブは environment `release` で動き、`required reviewers` の承認を待つ。`SIGNING_KEY` と `SIGNING_PASSWORD` は environment のシークレットにする。この移動にはシークレットの値が要るので、ユーザーの操作として残っている
+- `publish` ジョブは environment `release` で動き、`required reviewers` の承認を待つ。`SIGNING_KEY` と `SIGNING_PASSWORD` は environment のシークレットにする
 
 利用側（lab に適用する前提。rss-reader には恒常的には導入しない）:
 
@@ -154,10 +154,10 @@ Gradle の signing plugin で署名し、GitHub Packages で公開と取得が�
 
 ### 鍵の保管
 
-検証用の鍵は Actions シークレットに 1 つ置いた。運用の鍵では次のようにする。ここは実行していない。
+検証用の鍵は environment のシークレットに 1 つ置いた。運用の鍵では次のようにする。ここは実行していない。
 
 - 主鍵はオフラインに置き、主鍵の秘密部分を除いた鍵輪と副鍵の鍵 ID を Actions シークレットに入れる。副鍵での署名は実際に確認した。ただし Gradle の信頼は副鍵の fingerprint に結びつくので、副鍵の交換は利用側には鍵の交換と同じに見える（「追加の確認」の 4）
-- リポジトリの secret のままでは、workflow を push できる人は `SIGNING_KEY` を使える。environment のシークレットに移すと、environment を指定しないジョブには渡らず、`release` は `v*` のタグと承認を要求する（「public にした後の確認」の 4）
+- `SIGNING_KEY` は environment `release` のシークレットである。environment を指定しないジョブには渡らず、`release` は `v*` のタグと承認を要求する（「public にした後の確認」の 4）
 - `publish.yml` は `--no-configuration-cache` で実行し、署名鍵が configuration cache のエントリに入らないようにする
 
 `publish.yml` の公開のジョブは鍵を持つが、リビルドのジョブは鍵を持たない。鍵を持つジョブに不正なコードが混ざった場合でも、タグのソースからの結果と一致しなければ失敗する。
@@ -817,11 +817,33 @@ environment `release` を作った。`required_reviewers` は `appachan`、`prev
 | タグ `probe-env-gate-1` から `environment: release` を指定 | 拒否。`Tag "probe-env-gate-1" is not allowed to deploy to release due to environment protection rules.` | [run 41265437870](https://github.com/appachan/android-supply-chain-lab-lib/actions/runs/41265437870) |
 | 同じ実行で environment を指定しないジョブ | repository の secret は読める。environment の secret（確認用のダミー）は読めない | 同上 |
 
-`v0.4.0` の承認はしていない。`gh` の token はユーザー本人のものなので API では承認できるが、人の承認を確かめる検証で Claude が承認すると意味がなくなる。
+Claude は `v0.4.0` を承認していない。`gh` の token はユーザー本人のものなので API では承認できるが、人の承認を確かめる検証で Claude が承認すると意味がなくなる。ユーザーが画面で承認した後、23 分待っていた同じ run が再開した（[run 41265435254](https://github.com/appachan/android-supply-chain-lab-lib/actions/runs/41265435254)）。`publish`、`verify-reproducible`、`attest` はすべて成功し、`0.4.0` が公開された。承認の記録は `GET /actions/runs/{id}/approvals` で `approved`、`appachan` である。
 
-シークレットの移動は実行していない。GitHub のシークレットの値は読めず、検証用の鍵のファイルは消してあるので、同じ鍵は移せない。ユーザーが新しい鍵を作り、`gh secret set --env release` で入れ、公開鍵のファイルを更新する。`0.4.0` より後のバージョンは新しい鍵の署名になる。移動するまで `SIGNING_KEY` は repository の secret のままで、environment を指定しないジョブから読める。
+承認は鍵の移動より前だったので、environment にシークレットがなく、`0.4.0` は repository の `SIGNING_KEY`（旧鍵）で署名された。`.aar.asc` の鍵 ID は `0.3.0` と同じ `AD8EDA7ABCFDFAE6` である。environment に同じ名前のシークレットがなければ repository のものが渡る。
 
-ここで確かめられないこと: `required reviewers` の承認者でない write role の人が承認できないこと、`prevent_self_review` の実際の効果、承認の後の公開。
+GitHub のシークレットの値は読めず、旧鍵のファイルは消してあるので、新しい検証用の鍵に置き換えた。
+
+| 項目 | 値 |
+| --- | --- |
+| 生成 | Gradle 9.7.1 が同梱する BouncyCastle 1.85、RSA 3072、期限なし |
+| user ID | `android-supply-chain-lab-lib release key C (test)` |
+| fingerprint | `6BE556226D4323DB5C972F74667E34342E2C6F66` |
+| 鍵サーバーへの登録 | しない。利用側は keyring に鍵を足す |
+| 秘密鍵の保管 | environment `release` のシークレットだけ。作業用のファイルは消した |
+
+検証用の鍵なので、作業用のファイルを残していない。もう一度移す必要が出たら、鍵を作り直す。
+
+| 確認 | 結果 | 実行 |
+| --- | --- | --- |
+| environment を指定しないジョブの `SIGNING_KEY`、`SIGNING_PASSWORD` | どちらも空 | [run 41267216779](https://github.com/appachan/android-supply-chain-lab-lib/actions/runs/41267216779) |
+| repository のシークレット | 0 件 | API |
+| environment `release` のシークレット | `SIGNING_KEY`、`SIGNING_PASSWORD` | API |
+
+移動の作業では、私のスクリプトの誤りで、environment への設定の前に repository のシークレットを消した。公開の実行はなかったので影響はない。
+
+環境のシークレットで署名できることは `0.5.0` の承認の後に確かめる。鍵の交換の実例も、`0.4.0` ではなく `0.5.0` で確かめる。
+
+ここで確かめられないこと: `required reviewers` の承認者でない write role の人が承認できないこと、`prevent_self_review` の実際の効果。
 
 ### 5. ruleset と `required reviewers` が止めないもの
 
@@ -831,7 +853,7 @@ write role の 1 人でリリースできる問題に対して、ruleset と `re
 
 | 確認 | 結果 |
 | --- | --- |
-| `SIGNING_KEY` を読めるか（repository の secret のとき） | 読める。値は出力していない |
+| `SIGNING_KEY` を読めるか（repository の secret のとき） | 読めた。値は出力していない。移動の後は読めない |
 | `packages: write` の `GITHUB_TOKEN` で `0.0.2-probe` を PUT | POM、AAR とも 200。`.asc` はなく、ルールと承認を通っていない |
 | 同じ token で `0.0.2-probe` を削除 | 成功。確認の後に残っていない |
 
@@ -843,7 +865,7 @@ write role の 1 人でリリースできる問題に対して、ruleset と `re
 | `sha256` の記録 | 公開済みのバージョンの差し替えを検知する |
 | `gh attestation verify` の `--signer-workflow` と `--source-ref` | この公開には attestation がない。別の ref の workflow が attestation を作っても、`--source-ref` が一致しない |
 
-したがって、`SIGNING_KEY` を environment に移すことが必要である。移せば、未署名のバージョンは利用側で止まり、署名には承認が要る。
+`SIGNING_KEY` は environment に移したので、未署名のバージョンは利用側で止まり、署名には承認が要る。
 
 ## 再現手順
 
@@ -886,7 +908,8 @@ rss-reader にはこのライブラリを恒常的に導入しない。依存は
 - 利用側は、ハッシュと鍵の信頼の両方が必要になる。`sha256` の追記は自動にできるが、job summary との照合は人に残る
 - 副鍵を使っても、副鍵の交換のたびに利用側の keyring と metadata の更新が要る
 - `verify-reproducible` はリソースや NDK を足すと失敗するかもしれない
-- 検証の鍵はシークレットに 1 つだけある。運用の鍵は別に作り直す
+- 検証の鍵は environment のシークレットに 1 つだけある。運用の鍵は別に作り直す
+- `0.1.0` から `0.4.0` は旧鍵 `8493022D3CF93D42B2DC1C80AD8EDA7ABCFDFAE6`、`0.5.0` からは `6BE556226D4323DB5C972F74667E34342E2C6F66` で署名する。旧鍵の公開鍵は commit `503eb2a` の `docs/signing/release-key.pub.asc` にある
 - レジストリは不変ではない。`packages: write` で動くワークフローは公開済みのバージョンを差し替えられる
 - attestation は追跡の材料で、公開を止めない。リビルドの比較と同じく、ワークフローの改ざんには耐えない
 - `v*` のリリースには、admin のタグの push と承認の 2 つの操作が要る。admin が 1 人なら、どちらも同じ人である
@@ -895,7 +918,7 @@ rss-reader にはこのライブラリを恒常的に導入しない。依存は
 
 ## 未解決
 
-- `SIGNING_KEY` と `SIGNING_PASSWORD` の environment への移動と、移動の後の承認から公開までの実行。ユーザーの操作が要る
+- environment のシークレットでの署名と公開。`0.5.0` の承認の後に確かめる
 - 実際の write role の人に対する ruleset の拒否と、承認者でない人の承認の拒否。人が 1 人なので確かめられない
 - `prevent_self_review` の 1 人のリポジトリでの動作
 - Dependabot の実際の動作。`registries` も、自動の認証の Maven への適用も確認していない
