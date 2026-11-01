@@ -4,7 +4,7 @@ Date: 2026-10-31（2026-11-01 に追加の確認と public への変更を反映
 
 ## Status
 
-ライブラリ側の運用は Accepted。lab が依存してよいこと、鍵の信頼と `sha256` の併用、`sha256` のスクリプトでの追記、`.aar` の値の人の照合は、ユーザーが決めた。lab への組み込みはまだ実行していない。rss-reader には恒常的には導入しない。
+ライブラリ側の運用は Accepted。lab が依存してよいこと、鍵の信頼と `sha256` の併用、`sha256` のスクリプトでの追記、`.aar` の値の人の照合は、ユーザーが決めた。lab には [PR #24](https://github.com/appachan/android-supply-chain-lab/pull/24) で組み込んだ。rss-reader には恒常的には導入しない。
 
 このリポジトリは 2026-11-01 にユーザーの指示で public になった。名前の private は当初の検証の条件を表していて、以下の private の記述のうち、結果を変えたものは「public にした後の確認」に書いた。
 
@@ -35,7 +35,7 @@ android-supply-chain-lab のテーマ 4 である。自作の Android ライブ�
 - `v*` のタグは ruleset `release-tags` で repository admin 以外の作成、更新、削除を止める
 - `publish` ジョブは environment `release` で動き、`required reviewers` の承認を待つ。`SIGNING_KEY` と `SIGNING_PASSWORD` は environment のシークレットにする
 
-利用側（lab に適用する前提。rss-reader には恒常的には導入しない）:
+利用側（lab に適用済み。rss-reader には恒常的には導入しない）:
 
 - `exclusiveContent` と `includeModule` で、この module の取得先を GitHub Packages だけにする
 - `verification-metadata.xml` で、ライブラリの鍵の `trusted-key` をバージョン付きで持ち、さらに同じバージョンの `.aar` と `.module` の `sha256` を持つ。Gradle の再生成は新しいバージョンの `sha256` を書かないので、検査つきのスクリプトで足す。スクリプトだけでは防げない脅威が残るので、人が `.aar` の値をリビルドの job summary と照合する工程は残す（「追加の確認」の 1）
@@ -467,78 +467,11 @@ group の `com.github.appachan` は Maven Central で予約していない。予
 
 次の順序で実行する。
 
-1. 空の `GRADLE_USER_HOME` で再生成を 2 回実行する
+1. 空の `GRADLE_USER_HOME` で再生成を 1 回実行する（lab の ADR-0002 の方式）。この節の確認のときは 2 回実行した
 2. 同じ環境で検証の strict モードのビルドを実行し、失敗したら止まる
 3. `pin_library_hashes.py` を実行する。期待する fingerprint は PR で変更できない場所に置く
 
-```python
-#!/usr/bin/env python3
-"""Pin sha256 for a signed library. Run after regenerating and a strict build in the same GRADLE_USER_HOME.
-
-usage: pin_library_hashes.py <metadata.xml> <gradle-user-home> <group> <name> <fingerprint>
-"""
-import hashlib
-import pathlib
-import sys
-import xml.etree.ElementTree as ET
-
-NS = "{https://schema.gradle.org/dependency-verification}"
-ORIGIN = "pinned after signature verification"
-
-
-def reject(message):
-    sys.exit(f"Rejected: {message}")
-
-
-metadata, home, group, name, fingerprint = sys.argv[1:]
-root = ET.parse(metadata).getroot()
-
-failed = [k.get("id") for k in root.iter(f"{NS}ignored-key") if "verification failed" in (k.get("reason") or "")]
-if failed:
-    reject(f"signature verification failed for keys {failed}")
-
-
-def trusted_versions():
-    for key in root.iter(f"{NS}trusted-key"):
-        if key.get("id") == fingerprint:
-            for scope in [key, *key.findall(f"{NS}trusting")]:
-                if scope.get("group") == group and scope.get("name") == name:
-                    yield scope.get("version")
-
-
-trusted = set(trusted_versions())
-cache = pathlib.Path(home, "caches/modules-2/files-2.1", group, name)
-components = {c.get("version"): c for c in root.iter(f"{NS}component") if c.get("group") == group and c.get("name") == name}
-new = []
-for version_dir in sorted(p for p in cache.iterdir() if p.is_dir()):
-    version = version_dir.name
-    if version not in trusted:
-        reject(f"{version} is not covered by trusted key {fingerprint}")
-    existing = components.get(version)
-    if existing is not None:
-        if all(s.get("origin") == ORIGIN for s in existing.iter(f"{NS}sha256")):
-            continue
-        reject(f"{version} already has a hash that this script did not write")
-    rows = []
-    for suffix in (".aar", ".module"):
-        file_name = f"{name}-{version}{suffix}"
-        files = list(version_dir.glob(f"*/{file_name}"))
-        if len(files) != 1:
-            reject(f"expected one cached {file_name}, found {len(files)}. Use an empty GRADLE_USER_HOME")
-        digest = hashlib.sha256(files[0].read_bytes()).hexdigest()
-        rows.append(f'         <artifact name="{file_name}">\n            <sha256 value="{digest}" origin="{ORIGIN}"/>\n         </artifact>\n')
-    new.append(f'      <component group="{group}" name="{name}" version="{version}">\n{"".join(rows)}      </component>\n')
-
-path = pathlib.Path(metadata)
-text = path.read_text()
-block = "".join(new)
-if "<components/>" in text:
-    text = text.replace("<components/>", f"<components>\n{block}   </components>")
-else:
-    text = text.replace("<components>\n", f"<components>\n{block}", 1)
-path.write_text(text)
-print(f"Pinned {len(new)} versions")
-```
+実装は lab の [`.github/scripts/pin_library_hashes.py`](https://github.com/appachan/android-supply-chain-lab/blob/main/.github/scripts/pin_library_hashes.py) にある。この節の確認のときから 3 点を変えた。`pull_request` の workflow は PR で変更できるので、`Commit verification metadata`（main の定義）で実行する。このジョブに Gradle のキャッシュはないので、キャッシュではなく `library-repository` の artifact を読む。Gradle の並びの位置に `component` を挿入し、次の再生成の差分をなくす。
 
 手元の結果は次のとおりである。最小の利用側プロジェクトと偽の GitHub Packages を使い、`0.1.0` はハッシュ付き、公開の対象は `0.2.0` である。
 
@@ -861,21 +794,33 @@ write role の 1 人でリリースできる問題に対して、ruleset と `re
 
 | 利用側の検査 | この公開に対して |
 | --- | --- |
-| 鍵の信頼（`pgp`） | `.asc` がないと `trusting` に新しいバージョンが足されないので、`pin_library_hashes.py` は `not covered by trusted key` で拒否する見込み。未署名の場合は実行していない |
+| 鍵の信頼（`pgp`） | `.asc` がないと `trusting` に新しいバージョンが足されないので、`pin_library_hashes.py` が拒否する。lab の [run 41268379086](https://github.com/appachan/android-supply-chain-lab/actions/runs/41268379086) の `update-unsigned` で確認した |
 | `sha256` の記録 | 公開済みのバージョンの差し替えを検知する |
 | `gh attestation verify` の `--signer-workflow` と `--source-ref` | この公開には attestation がない。別の ref の workflow が attestation を作っても、`--source-ref` が一致しない |
 
 `SIGNING_KEY` は environment に移したので、未署名のバージョンは利用側で止まり、署名には承認が要る。
+
+### 6. lab への組み込み
+
+[PR #24](https://github.com/appachan/android-supply-chain-lab/pull/24) で lab の `:shared:ui` が `0.3.0` に依存した。merge commit は `564ae08`、PR の `verify` は [run 41269841663](https://github.com/appachan/android-supply-chain-lab/actions/runs/41269841663)、main の CI は [run 41270136751](https://github.com/appachan/android-supply-chain-lab/actions/runs/41270136751) で、どちらも成功した。実装、差し替えの検知の表、鍵の交換の手順は lab の ADR-0002 の「GitHub Packages のライブラリ」に書いた。
+
+| 差し替えの確認（lab の構成、空の環境） | 結果 |
+| --- | --- |
+| 実物の `0.3.0` | 成功 |
+| 同じ鍵の有効な署名を持つ差し替え | `sha256` で失敗 |
+| 同じ差し替え、`sha256` なしの metadata | 成功。鍵の信頼だけでは検知できない |
+| 中身の改ざん、攻撃者の鍵 | 失敗 |
+
+GitHub Packages の `0.3.0` は変更していないので、差し替えは `-PlibRepositoryDirectory` のディレクトリで再現した。Actions のキャッシュが効いたビルドでの差し替えは確認していない。
+
+鍵の交換の実例は `0.5.0` で確かめる。`0.5.0` は environment `release` の新しい鍵で署名される。lab は先に新しい鍵の公開鍵を keyring に、fingerprint を `LIBRARY_SIGNING_KEYS` に足す。
 
 ## 再現手順
 
 ライブラリの再生成:
 
 ```sh
-GRADLE_USER_HOME="$(mktemp -d)" sh -c '
-  ./gradlew --write-verification-metadata pgp,sha256 --export-keys --write-locks build
-  ./gradlew --write-verification-metadata pgp,sha256 --export-keys --write-locks build
-'
+GRADLE_USER_HOME="$(mktemp -d)" ./gradlew --write-verification-metadata pgp,sha256 --export-keys --write-locks build
 ```
 
 リビルド:
@@ -897,7 +842,7 @@ rss-reader にはこのライブラリを恒常的に導入しない。依存は
 - catalog にライブラリを足し、公開鍵を `gradle/verification-keyring.keys` に足す
 - 再生成の後に、ライブラリの `sha256` を `verification-metadata.xml` に足す
 - lab の `Regenerate verification metadata` ワークフロー（`.github/workflows/regenerate-verification-metadata.yml`）の `regenerate` ジョブの前に取得のジョブを足し、`regenerate` ジョブには token を渡さない。settings は「追加の確認」の 2 の形にする
-- 再生成と検証の strict モードのビルドの後に `pin_library_hashes.py` を実行する。期待する fingerprint は PR で変更できない場所に置く
+- 再生成と検証の strict モードのビルドの後に、`Commit verification metadata` で `pin_library_hashes.py` を実行する。期待する fingerprint は main の定義に置く
 - CI のジョブは `GITHUB_TOKEN` で読める。Dependabot の認証は未確認
 - rss-reader は `setup-gradle` を使っている。token の環境変数と configuration cache の組み合わせは確認していない。署名鍵と同じ理由で、token が configuration cache に保存されないことを確認する
 - fork の PR の CI の失敗をどう扱うかを決める
