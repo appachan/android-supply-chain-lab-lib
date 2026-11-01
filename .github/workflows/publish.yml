@@ -80,3 +80,29 @@ jobs:
             echo "$file $rebuilt" | tee -a "$GITHUB_STEP_SUMMARY"
             test "$published" = "$rebuilt"
           done
+
+  # 比較を通った公開物だけを証明する。シークレットと Gradle のないジョブに分け、OIDC token を渡す範囲を絞る
+  attest:
+    needs: verify-reproducible
+    runs-on: ubuntu-latest
+    permissions:
+      packages: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - name: Download the published artifacts
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          name="android-supply-chain-lab-lib-$version"
+          url="https://maven.pkg.github.com/appachan/android-supply-chain-lab-lib/com/github/appachan/android-supply-chain-lab-lib/$version"
+          mkdir published
+          for file in "$name.aar" "$name.pom" "$name.module" "$name-sources.jar"; do
+            curl -fsSL -u "$GITHUB_ACTOR:$GITHUB_TOKEN" -o "published/$file" "$url/$file"
+          done
+
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: published/*
