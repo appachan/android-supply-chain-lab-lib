@@ -819,7 +819,7 @@ environment `release` を作った。`required_reviewers` は `appachan`、`prev
 
 `v0.4.0` の承認はしていない。`gh` の token はユーザー本人のものなので API では承認できるが、人の承認を確かめる検証で Claude が承認すると意味がなくなる。
 
-シークレットの移動は実行していない。値を読めないので、ユーザーが `gh secret set --env release` で入れ直す必要がある。移動するまで `SIGNING_KEY` は repository の secret のままで、environment を指定しないジョブから読める。
+シークレットの移動は実行していない。GitHub のシークレットの値は読めず、検証用の鍵のファイルは消してあるので、同じ鍵は移せない。ユーザーが新しい鍵を作り、`gh secret set --env release` で入れ、公開鍵のファイルを更新する。`0.4.0` より後のバージョンは新しい鍵の署名になる。移動するまで `SIGNING_KEY` は repository の secret のままで、environment を指定しないジョブから読める。
 
 ここで確かめられないこと: `required reviewers` の承認者でない write role の人が承認できないこと、`prevent_self_review` の実際の効果、承認の後の公開。
 
